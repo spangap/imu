@@ -1,0 +1,56 @@
+# IMU wiring. This straddle DEFINES the knobs; a board sets their values via
+# its straddle.yaml `kconfig:` block (a non-buildable board's sdkconfig.defaults
+# is ignored, so hardware values must live there). No magic constants in the
+# .cpp — every pin is a CONFIG_IMU_*.
+menu "IMU (spangap/imu)"
+
+config IMU_SPI_HOST
+    int "SPI peripheral the QMI8658 is on: 2 = SPI2/FSPI, 3 = SPI3 (-1 = not wired)"
+    default -1
+    help
+      The peripheral NAME, as board headers and every other straddle's pin
+      block spell it — not the IDF spi_host_device_t enum, which is offset by
+      one. Left at -1 the service stays dormant and touches no bus. The IMU
+      typically shares its host with the SD card, which spangapInit() brings
+      up before any service runs — the driver initialises the host only if it
+      finds it free, and adopts it otherwise.
+
+config IMU_SPI_SCK_PIN
+    int "SPI SCK gpio"
+    default -1
+    help
+      Used ONLY when this straddle has to initialise the host itself, i.e. on
+      a board where nothing else (no SD card) brought it up first.
+
+config IMU_SPI_MOSI_PIN
+    int "SPI MOSI gpio"
+    default -1
+
+config IMU_SPI_MISO_PIN
+    int "SPI MISO gpio"
+    default -1
+
+config IMU_CS_PIN
+    int "QMI8658 chip-select gpio (-1 = not wired)"
+    default -1
+
+config IMU_INT_PIN
+    int "Motion interrupt gpio (-1 = poll only)"
+    default -1
+    help
+      Optional. The part latches every motion event in a status register that
+      is cleared by reading it, so polling never misses one — the interrupt
+      only shortens the latency between a movement and noticing it. Leave it
+      at -1 on a board that does not bring the line out, or where the pin
+      cannot do what you want with it (an ESP32-S3 wakes from deep sleep only
+      on RTC-capable GPIOs, 0-21).
+
+config IMU_INT_LINE
+    int "Which of the part's interrupt outputs that pin is wired to (1 or 2)"
+    default 1
+    help
+      The QMI8658 has INT1 and INT2 and Wake-on-Motion must name one. Vendor
+      pin maps rarely say which a board used; if the interrupt never fires,
+      this is the first thing to try the other way round.
+
+endmenu

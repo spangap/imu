@@ -1,0 +1,10 @@
+description: "imu: motion oracle. Holds a QMI8658 accelerometer in low power with Wake-on-Motion armed and publishes whether the device is moving to imu.*."
+url: https://github.com/spangap/imu
+version: "0.1.0"
+license: "Apache-2.0"
+dependencies:
+  idf:
+    version: ">=5.5"
+  # Cross-straddle deps are declared in straddle.yaml's `requires:` and staged
+  # short-named via EXTRA_COMPONENT_DIRS at consumer-build time — not here, to
+  # avoid double-staging under the manager's namespaced form.

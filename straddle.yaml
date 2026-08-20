@@ -1,0 +1,51 @@
+# spangap/imu — generic motion-sensing straddle.
+#
+# One question, answered continuously: is this device moving? A QMI8658 (SPI)
+# runs its accelerometer in low-power mode with Wake-on-Motion armed, and the
+# task publishes a debounced state plus an event counter into ephemeral imu.*.
+# Nothing else — no orientation, no tilt, no step counting, no sample stream.
+# A consumer that wants those wants a different straddle.
+#
+# The straddle owns the chip; a board contributes only Kconfig pin data
+# (CONFIG_IMU_SPI_* / CONFIG_IMU_CS_PIN / CONFIG_IMU_INT_PIN) via its
+# straddle.yaml `kconfig:` block and stages this straddle from its
+# additional_installs when the part is soldered on.
+#
+# Consumers couple over the storage bus, never by linking: gps reads imu.moving
+# to stop tracking a device that is standing still.
+schema_version: 1
+name: spangap/imu
+prefix: imu
+version: 0.0.0
+firmware: esp-idf
+platforms: [idf]
+# Boot service: constructed and registered by the buildable's generated
+# dispatcher. ImuService::onInit() seeds storage defaults, registers the CLI
+# command, and spawns the motion task.
+services:
+  - { class: ImuService, header: imu.h }
+
+# The Motion pane rows on the System page. Keys are defaultless here — their
+# defaults are owned by imu.cpp (versioned via s.imu.version); this block only
+# surfaces them. Order 40 slots the section after GPS (30).
+settings:
+  - at: [ { id: system } ]
+    order: 40
+    rows:
+      - section: "Motion"
+      - switch: { label: "Enable", key: "s.imu.enable" }
+      - slider: { label: "Threshold (mg)", key: "s.imu.threshold_mg", min: 5, max: 250 }
+      - caption: "Lower = more sensitive. A hand-carried device trips ~40 mg."
+      - dropdown:
+          label: "Sample rate"
+          key: "s.imu.odr"
+          options:
+            - { v: "3",   l: "3 Hz (30 µA)" }
+            - { v: "11",  l: "11 Hz (35 µA)" }
+            - { v: "21",  l: "21 Hz (42 µA)" }
+            - { v: "128", l: "128 Hz (55 µA)" }
+      - slider: { label: "Still after (s)", key: "s.imu.still_s", min: 5, max: 300 }
+      - info:
+          rows:
+            - value: { label: "State",  key: "imu.state" }
+            - value: { label: "Sensor", key: "imu.model" }
