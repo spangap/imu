@@ -372,7 +372,11 @@ static void imuTaskMain(void*) {
             }
         }
 
-        itsPoll(pdMS_TO_TICKS(kPollMs));
+        /* The 1 s cadence exists only to read the WoM latch; disabled or
+         * absent, there is nothing to read and a wake per second just caps
+         * every light-sleep nap. Park until a config change notifies. */
+        itsPoll((s_present && s_enabled && s_armed) ? pdMS_TO_TICKS(kPollMs)
+                                                    : portMAX_DELAY);
     }
 }
 

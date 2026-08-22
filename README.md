@@ -83,7 +83,9 @@ cannot miss an event. The task polls at 1 Hz whether or not an interrupt is
 wired, so a board that brings no line out — or brings it out on a pin that
 cannot do what you need, such as a non-RTC GPIO on an ESP32-S3 that therefore
 cannot wake deep sleep — works exactly the same, just with up to a second more
-latency.
+latency. The poll runs only while the sensor is armed: disabled or absent, the
+task parks until a config change wakes it, so it adds no wakes to a sleeping
+node.
 
 ## CLI
 
