@@ -33,8 +33,8 @@ settings:
     order: 40
     rows:
       - section: "Motion"
-      - switch: { label: "Enable", key: "s.imu.enable" }
-      - slider: { label: "Threshold (mg)", key: "s.imu.threshold_mg", min: 5, max: 250 }
+      - switch: { label: "Enable motion sensing", key: "s.imu.enable" }
+      - integer: { label: "Threshold", unit: "mg", key: "s.imu.threshold_mg", min: 5, max: 250 }
       - caption: "Lower = more sensitive. A hand-carried device trips ~40 mg."
       - dropdown:
           label: "Sample rate"
@@ -44,7 +44,7 @@ settings:
             - { v: "11",  l: "11 Hz (35 µA)" }
             - { v: "21",  l: "21 Hz (42 µA)" }
             - { v: "128", l: "128 Hz (55 µA)" }
-      - slider: { label: "Still after (s)", key: "s.imu.still_s", min: 5, max: 300 }
+      - integer: { label: "Still after", unit: "s", key: "s.imu.still_s", min: 5, max: 300 }
       - info:
           rows:
             - value: { label: "State",  key: "imu.state" }
