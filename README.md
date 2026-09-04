@@ -17,24 +17,52 @@ This straddle **defines** the knobs (`esp-idf/Kconfig`); a board sets their
 values in its `straddle.yaml` `kconfig:` block, gated `when: spangap/imu`, and
 lists `spangap/imu` in `additional_installs:`.
 
+The part speaks the same registers over either bus, so a board states which one
+it wired and then only that bus's pins. Everything above `regRead`/`regWrite` in
+`imu.cpp` is transport-blind.
+
+| Symbol | Default | Meaning |
+|---|---|---|
+| `CONFIG_IMU_BUS_SPI` / `CONFIG_IMU_BUS_I2C` | SPI | which bus the part is on; picks which block below applies |
+| `CONFIG_IMU_INT_PIN` | `-1` | motion interrupt; `-1` = poll only |
+| `CONFIG_IMU_INT_LINE` | `1` | which of the part's two interrupt outputs that pin is wired to |
+
+SPI (`CONFIG_IMU_BUS_SPI`):
+
 | Symbol | Default | Meaning |
 |---|---|---|
 | `CONFIG_IMU_SPI_HOST` | `-1` | SPI host the part is on; `-1` = not wired, service dormant |
 | `CONFIG_IMU_SPI_SCK_PIN` / `_MOSI_PIN` / `_MISO_PIN` | `-1` | bus pins, used **only** when this straddle has to bring the host up itself |
 | `CONFIG_IMU_CS_PIN` | `-1` | chip select |
-| `CONFIG_IMU_INT_PIN` | `-1` | motion interrupt; `-1` = poll only |
-| `CONFIG_IMU_INT_LINE` | `1` | which of the part's two interrupt outputs that pin is wired to |
 
-**The bus is shared, and this straddle assumes it.** The IMU usually sits on the
-SD card's SPI host, which `spangapInit()` claims before any service runs, so the
-driver initialises the host only if it finds it free and **adopts** it
+I2C (`CONFIG_IMU_BUS_I2C`):
+
+| Symbol | Default | Meaning |
+|---|---|---|
+| `CONFIG_IMU_I2C_SDA_PIN` / `_SCL_PIN` | `-1` | bus pins; `-1` = not wired, service dormant |
+| `CONFIG_IMU_I2C_PORT` | `-1` | `-1` = create the bus; `0`/`1` = adopt the board's existing bus on that controller |
+| `CONFIG_IMU_I2C_ADDR` | `0x6B` | the part's SA0 strapping (`0x6A` with SA0 low) |
+
+**The bus is shared, and this straddle assumes it.** On SPI the IMU usually sits
+on the SD card's host, which `spangapInit()` claims before any service runs, so
+the driver initialises the host only if it finds it free and **adopts** it
 otherwise — `ESP_ERR_INVALID_STATE` is success here, not failure. That is why
-the pin symbols above are qualified: on a board with an SD card they are never
-used.
+the SPI pin symbols above are qualified: on a board with an SD card they are
+never used. On I2C the sharing is explicit instead: a board whose bus already
+carries a touch controller, an RTC or an IO expander brings that bus up in its
+own start-band service and names the controller in `CONFIG_IMU_I2C_PORT`, and
+this straddle adopts it rather than putting a second master on the same two
+wires.
 
 **SPI mode is discovered, not configured.** The part accepts mode 0 and mode 3,
 and vendor material does not commit to which a given board wants, so the driver
 tries mode 0 and falls back to mode 3, deciding on the `WHO_AM_I` read.
+
+**An interrupt on an IO expander is not an interrupt.** `CONFIG_IMU_INT_PIN`
+names a real GPIO or nothing: a board that routes INT1/INT2 through an I2C
+expander (the Waveshare 2.8B does) leaves it at `-1` and the service polls,
+which costs nothing here because the poll is what clears the part's latch
+anyway.
 
 ## Published keys
 

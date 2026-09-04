@@ -4,8 +4,25 @@
 # .cpp — every pin is a CONFIG_IMU_*.
 menu "IMU (spangap/imu)"
 
+choice IMU_BUS
+    prompt "Bus the QMI8658 is on"
+    default IMU_BUS_SPI
+    help
+      The part answers the same register map either way — the transport is the
+      only difference, and it is the board's, not the chip's. Which one a given
+      board wired is a hardware fact with no default worth guessing: a QMI8658
+      shares whichever bus its neighbours already use, the SD card's SPI on the
+      T-Beam Supreme, the sensor I2C on the Waveshare 2.8B.
+
+    config IMU_BUS_SPI
+        bool "SPI (4-wire)"
+    config IMU_BUS_I2C
+        bool "I2C"
+endchoice
+
 config IMU_SPI_HOST
     int "SPI peripheral the QMI8658 is on: 2 = SPI2/FSPI, 3 = SPI3 (-1 = not wired)"
+    depends on IMU_BUS_SPI
     default -1
     help
       The peripheral NAME, as board headers and every other straddle's pin
@@ -17,6 +34,7 @@ config IMU_SPI_HOST
 
 config IMU_SPI_SCK_PIN
     int "SPI SCK gpio"
+    depends on IMU_BUS_SPI
     default -1
     help
       Used ONLY when this straddle has to initialise the host itself, i.e. on
@@ -24,15 +42,54 @@ config IMU_SPI_SCK_PIN
 
 config IMU_SPI_MOSI_PIN
     int "SPI MOSI gpio"
+    depends on IMU_BUS_SPI
     default -1
 
 config IMU_SPI_MISO_PIN
     int "SPI MISO gpio"
+    depends on IMU_BUS_SPI
     default -1
 
 config IMU_CS_PIN
     int "QMI8658 chip-select gpio (-1 = not wired)"
+    depends on IMU_BUS_SPI
     default -1
+
+config IMU_I2C_SDA_PIN
+    int "I2C SDA gpio (-1 = not wired)"
+    depends on IMU_BUS_I2C
+    default -1
+    help
+      The straddle creates its own I2C master bus on these pins (any free
+      controller) unless IMU_I2C_PORT names one to adopt. Left at -1 the
+      service stays dormant and touches no bus.
+
+config IMU_I2C_SCL_PIN
+    int "I2C SCL gpio (-1 = not wired)"
+    depends on IMU_BUS_I2C
+    default -1
+
+config IMU_I2C_PORT
+    int "I2C controller the chip's bus already lives on (-1 = create one)"
+    depends on IMU_BUS_I2C
+    default -1
+    help
+      For a board whose QMI8658 shares its wires with other chips — a touch
+      controller, an RTC, an IO expander — and which therefore brings that bus
+      up itself, in its board service, before this one runs. Naming its
+      controller here makes the service adopt that bus instead of putting a
+      second master on the same two wires, which the SoC allows and the wires
+      do not. The pins above still describe the wiring and are still what marks
+      the IMU wired.
+
+config IMU_I2C_ADDR
+    hex "QMI8658 I2C address"
+    depends on IMU_BUS_I2C
+    default 0x6B
+    range 0x6A 0x6B
+    help
+      Set by the part's SA0 pin: 0x6B with it high (the usual strapping),
+      0x6A with it low.
 
 config IMU_INT_PIN
     int "Motion interrupt gpio (-1 = poll only)"
@@ -41,9 +98,10 @@ config IMU_INT_PIN
       Optional. The part latches every motion event in a status register that
       is cleared by reading it, so polling never misses one — the interrupt
       only shortens the latency between a movement and noticing it. Leave it
-      at -1 on a board that does not bring the line out, or where the pin
-      cannot do what you want with it (an ESP32-S3 wakes from deep sleep only
-      on RTC-capable GPIOs, 0-21).
+      at -1 on a board that does not bring the line out, where it arrives on an
+      IO expander rather than a pin, or where the pin cannot do what you want
+      with it (an ESP32-S3 wakes from deep sleep only on RTC-capable GPIOs,
+      0-21).
 
 config IMU_INT_LINE
     int "Which of the part's interrupt outputs that pin is wired to (1 or 2)"

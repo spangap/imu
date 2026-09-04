@@ -7,6 +7,10 @@
  * READING the register, which is what lets this work with no interrupt at all —
  * a poll can be late but cannot miss an event.
  *
+ * The chip speaks the same register map over either bus, so everything below
+ * the regRead/regWrite pair is transport-blind and the board's CONFIG_IMU_BUS_*
+ * choice reaches no further than the block that opens it.
+ *
  * Register facts, from the QMI8658C data sheet (rev 0.9):
  *
  *   WHO_AM_I 0x00 = 0x05           CTRL7  0x08  bit0 aEN, bit1 gEN
@@ -30,7 +34,12 @@
 #include "spi_helper.h"     /* idempotent bus init + the one GPIO ISR install */
 
 #include "driver/gpio.h"
+#if CONFIG_IMU_BUS_SPI
 #include "driver/spi_master.h"
+#else
+#include "driver/i2c_master.h"
+#include "i2c_helper.h"     /* SPANGAP_I2C_PULLUP (shared bus wiring policy) */
+#endif
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -72,7 +81,6 @@ static constexpr uint8_t kBlankSamples = 8;
 
 /* ─────────────── state (single-task ownership after onInit) ─────────────── */
 
-static spi_device_handle_t s_dev     = nullptr;
 static TaskHandle_t        s_task    = nullptr;
 static volatile bool       s_cfgDirty = true;
 static volatile bool       s_intFired = false;
@@ -89,7 +97,16 @@ static int      s_odrHz       = 11;
 static int      s_stillS      = 30;
 static int64_t  s_lastPublishUs = 0;
 
-/* ─────────────── SPI ─────────────── */
+/* ─────────────── transport (CONFIG_IMU_BUS_*) ───────────────
+ *
+ * Three functions is the whole of it: does this build wire the part at all
+ * (imuWired), open the bus and confirm the part answers on it (imuBusOpen),
+ * and how to say where it is in a log line (imuWhere). Everything past
+ * regRead/regWrite is the same code on either bus. */
+
+#if CONFIG_IMU_BUS_SPI
+
+static spi_device_handle_t s_dev = nullptr;
 
 static bool imuXfer(const uint8_t* tx, uint8_t* rx, size_t n) {
     spi_transaction_t t = {};
@@ -99,6 +116,8 @@ static bool imuXfer(const uint8_t* tx, uint8_t* rx, size_t n) {
     return spi_device_transmit(s_dev, &t) == ESP_OK;
 }
 
+/* Bit 7 of the address byte is the direction over SPI; over I2C it is not,
+ * which is why the two register pairs are separate rather than shared. */
 static uint8_t regRead(uint8_t reg) {
     uint8_t tx[2] = { (uint8_t)(reg | 0x80), 0x00 }, rx[2] = {};
     return imuXfer(tx, rx, 2) ? rx[1] : 0xFF;
@@ -119,6 +138,16 @@ static_assert(CONFIG_IMU_SPI_HOST < 0 ||
               "IMU_SPI_HOST must be 2 (SPI2) or 3 (SPI3), or -1 for not wired");
 static constexpr spi_host_device_t kImuHost =
     (CONFIG_IMU_SPI_HOST == 2) ? SPI2_HOST : SPI3_HOST;
+
+static bool imuWired(void) {
+    return CONFIG_IMU_SPI_HOST >= 0 && CONFIG_IMU_CS_PIN >= 0;
+}
+
+static const char* imuWhere(void) {
+    static char s[24];
+    snprintf(s, sizeof(s), "SPI%d CS%d", CONFIG_IMU_SPI_HOST, CONFIG_IMU_CS_PIN);
+    return s;
+}
 
 /* The host may own this bus already — spangapInit() brings it up for the SD
  * card before any service runs, and the two share it. spiHelperInitBus is the
@@ -163,6 +192,82 @@ static bool imuBusOpen(void) {
     }
     return false;
 }
+
+#else   /* CONFIG_IMU_BUS_I2C */
+
+static i2c_master_dev_handle_t s_dev = nullptr;
+
+/* 50 ms per transfer: the register pairs are two bytes at 400 kHz, so this is
+ * a hang guard rather than a budget. */
+static uint8_t regRead(uint8_t reg) {
+    uint8_t v = 0;
+    if (!s_dev) return 0xFF;
+    return i2c_master_transmit_receive(s_dev, &reg, 1, &v, 1, 50) == ESP_OK ? v : 0xFF;
+}
+
+static void regWrite(uint8_t reg, uint8_t val) {
+    if (!s_dev) return;
+    uint8_t buf[2] = { reg, val };
+    i2c_master_transmit(s_dev, buf, sizeof(buf), 50);
+}
+
+static bool imuWired(void) {
+    return CONFIG_IMU_I2C_SDA_PIN >= 0 && CONFIG_IMU_I2C_SCL_PIN >= 0;
+}
+
+static const char* imuWhere(void) {
+    static char s[24];
+    snprintf(s, sizeof(s), "I2C 0x%02X", CONFIG_IMU_I2C_ADDR);
+    return s;
+}
+
+/* Either the board already brought this bus up for its other chips and named
+ * the controller (CONFIG_IMU_I2C_PORT), in which case adopt it — a second
+ * master on the same two wires is a thing the SoC allows and the wires do not
+ * — or the part is alone on its pins and we create the bus ourselves. */
+static bool imuBusOpen(void) {
+    i2c_master_bus_handle_t bus = nullptr;
+    if (CONFIG_IMU_I2C_PORT >= 0) {
+        /* The bus exists already — a board service runs in the start band,
+         * ahead of every onInit — so a failure here is a board that named the
+         * wrong controller, not a race to retry. */
+        if (i2c_master_get_bus_handle(CONFIG_IMU_I2C_PORT, &bus) != ESP_OK) {
+            warn("no i2c bus on port %d to share with the IMU", CONFIG_IMU_I2C_PORT);
+            return false;
+        }
+    } else {
+        i2c_master_bus_config_t bcfg = {};
+        bcfg.i2c_port                     = -1;   /* any free controller */
+        bcfg.sda_io_num                   = (gpio_num_t)CONFIG_IMU_I2C_SDA_PIN;
+        bcfg.scl_io_num                   = (gpio_num_t)CONFIG_IMU_I2C_SCL_PIN;
+        bcfg.clk_source                   = I2C_CLK_SRC_DEFAULT;
+        bcfg.glitch_ignore_cnt            = 7;
+        bcfg.flags.enable_internal_pullup = SPANGAP_I2C_PULLUP;
+        if (i2c_new_master_bus(&bcfg, &bus) != ESP_OK) {
+            warn("i2c bus init failed (SDA=%d SCL=%d)",
+                 CONFIG_IMU_I2C_SDA_PIN, CONFIG_IMU_I2C_SCL_PIN);
+            return false;
+        }
+    }
+
+    i2c_device_config_t dcfg = {};
+    dcfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dcfg.device_address  = CONFIG_IMU_I2C_ADDR;
+    dcfg.scl_speed_hz    = 400000;
+    if (i2c_master_bus_add_device(bus, &dcfg, &s_dev) != ESP_OK) {
+        s_dev = nullptr;
+        return false;
+    }
+    for (int i = 0; i < 5; i++) {              /* a cold rail needs a few ms */
+        if (regRead(QMI_WHOAMI) == QMI_WHOAMI_VAL) return true;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    i2c_master_bus_rm_device(s_dev);
+    s_dev = nullptr;
+    return false;
+}
+
+#endif
 
 /* ─────────────── the part's two states ─────────────── */
 
@@ -315,6 +420,7 @@ static void cliImu(const char* args) {
     if (args && strcmp(args, "off") == 0) { storageSet("s.imu.enable", 0); cliPrintf("disabled\n"); return; }
 
     cliPrintf("sensor:    %s\n", s_present ? "QMI8658" : "not present");
+    cliPrintf("bus:       %s\n", imuWhere());
     if (!s_present) return;
     cliPrintf("state:     %s\n", !s_enabled ? "asleep" : s_moving ? "moving" : "still");
     cliPrintf("still:     %lu s\n", (unsigned long)imuStillSeconds());
@@ -392,8 +498,8 @@ void ImuService::onInit() {
     }
     cliRegisterCmd("imu", cliImu);
 
-    if (CONFIG_IMU_SPI_HOST < 0 || CONFIG_IMU_CS_PIN < 0) {
-        dbg("no SPI host/CS configured (CONFIG_IMU_*) — dormant");
+    if (!imuWired()) {
+        dbg("no bus configured (CONFIG_IMU_*) — dormant");
         storageSet("imu.present", 0);
         storageSet("imu.state", "not present");
         return;
@@ -402,11 +508,11 @@ void ImuService::onInit() {
     storageSet("imu.present", s_present ? 1 : 0);
     storageSet("imu.model", s_present ? "QMI8658" : "");
     if (!s_present) {
-        warn("no QMI8658 on SPI%d CS%d", CONFIG_IMU_SPI_HOST, CONFIG_IMU_CS_PIN);
+        warn("no QMI8658 on %s", imuWhere());
         storageSet("imu.state", "not present");
         return;
     }
-    info("QMI8658 present on SPI%d CS%d", CONFIG_IMU_SPI_HOST, CONFIG_IMU_CS_PIN);
+    info("QMI8658 present on %s", imuWhere());
 
     /* Boot counts as motion: something moved this device to switch it on, and a
      * consumer that parks on stillness should start from "awake" rather than

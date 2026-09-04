@@ -1,10 +1,11 @@
 /**
  * imu — motion sensing, and nothing else.
  *
- * A QMI8658 accelerometer (SPI, pins from CONFIG_IMU_*) held in low-power mode
- * with Wake-on-Motion armed. The task turns the part's latched motion events
- * into a debounced answer to one question — is this device moving — and
- * publishes it to ephemeral imu.*. See imu.cpp for the register sequences.
+ * A QMI8658 accelerometer (SPI or I2C, whichever the board wired — CONFIG_IMU_*)
+ * held in low-power mode with Wake-on-Motion armed. The task turns the part's
+ * latched motion events into a debounced answer to one question — is this
+ * device moving — and publishes it to ephemeral imu.*. See imu.cpp for the
+ * register sequences.
  *
  * Published keys (the contract other straddles use; nobody links against this):
  *

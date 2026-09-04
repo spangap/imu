@@ -1,15 +1,16 @@
 # spangap/imu — generic motion-sensing straddle.
 #
-# One question, answered continuously: is this device moving? A QMI8658 (SPI)
-# runs its accelerometer in low-power mode with Wake-on-Motion armed, and the
-# task publishes a debounced state plus an event counter into ephemeral imu.*.
+# One question, answered continuously: is this device moving? A QMI8658 — on
+# SPI or on I2C, whichever the board wired (CONFIG_IMU_BUS_*) — runs its
+# accelerometer in low-power mode with Wake-on-Motion armed, and the task
+# publishes a debounced state plus an event counter into ephemeral imu.*.
 # Nothing else — no orientation, no tilt, no step counting, no sample stream.
 # A consumer that wants those wants a different straddle.
 #
-# The straddle owns the chip; a board contributes only Kconfig pin data
-# (CONFIG_IMU_SPI_* / CONFIG_IMU_CS_PIN / CONFIG_IMU_INT_PIN) via its
-# straddle.yaml `kconfig:` block and stages this straddle from its
-# additional_installs when the part is soldered on.
+# The straddle owns the chip; a board contributes only Kconfig wiring data (the
+# bus choice, then CONFIG_IMU_SPI_* / CONFIG_IMU_CS_PIN or CONFIG_IMU_I2C_*,
+# plus CONFIG_IMU_INT_PIN) via its straddle.yaml `kconfig:` block and stages
+# this straddle from its additional_installs when the part is soldered on.
 #
 # Consumers couple over the storage bus, never by linking: gps reads imu.moving
 # to stop tracking a device that is standing still.
